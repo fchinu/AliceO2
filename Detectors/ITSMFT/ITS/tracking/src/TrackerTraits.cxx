@@ -718,7 +718,7 @@ void TrackerTraits<nLayers>::processNeighbours(int iLayer, int iLevel, const bou
 template <int nLayers>
 void TrackerTraits<nLayers>::findRoads(const int iteration)
 {
-  bounded_vector<bounded_vector<int>> firstClusters(mTrkParams[iteration].NLayers, bounded_vector<int>(mMemoryPool.get()), mMemoryPool.get());  
+  bounded_vector<bounded_vector<int>> firstClusters(mTrkParams[iteration].NLayers, bounded_vector<int>(mMemoryPool.get()), mMemoryPool.get());
   bounded_vector<bounded_vector<int>> sharedFirstClusters(mTrkParams[iteration].NLayers, bounded_vector<int>(mMemoryPool.get()), mMemoryPool.get());
   firstClusters.resize(mTrkParams[iteration].NLayers);
   sharedFirstClusters.resize(mTrkParams[iteration].NLayers);
