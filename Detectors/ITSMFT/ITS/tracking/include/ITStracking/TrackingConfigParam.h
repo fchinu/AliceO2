@@ -103,9 +103,9 @@ struct TrackerParamConfig : public o2::conf::ConfigurableParamHelper<TrackerPara
   bool allowSharingFirstCluster = false; // allow first cluster sharing among tracks
 
   // Selections on tracks sharing clusters
-  float sharedClusterMaxDeltaPhi = 0.05f;   // Maximum allowed delta phi at the cluster position
-  float sharedClusterMaxDeltaEta = 0.03f;   // Maximum allowed delta eta at the cluster position
-  bool sharedClusterOppositeSign = false;   // Require opposite sign of the tracklets
+  float sharedClusterMaxDeltaPhi = 0.05f; // Maximum allowed delta phi at the cluster position
+  float sharedClusterMaxDeltaEta = 0.03f; // Maximum allowed delta eta at the cluster position
+  bool sharedClusterOppositeSign = false; // Require opposite sign of the tracklets
 
   O2ParamDef(TrackerParamConfig, "ITSCATrackerParam");
 };
