@@ -869,9 +869,9 @@ void TrackerTraits<NLayers>::markTracks(int iteration)
     /// Now we have to set the shared cluster flag
     auto& tracks = mTimeFrame->getTracks();
 
-    bounded_vector<int> fclusSort(tracks.size(), mMemoryPool.get());  
-    std::iota(fclusSort.begin(), fclusSort.end(), 0);  
-    std::sort(fclusSort.begin(), fclusSort.end(), [&tracks](int a, int b) { 
+    bounded_vector<int> fclusSort(tracks.size(), mMemoryPool.get());
+    std::iota(fclusSort.begin(), fclusSort.end(), 0);
+    std::sort(fclusSort.begin(), fclusSort.end(), [&tracks](int a, int b) {
       return tracks[a].getFirstLayerClusterIndex() < tracks[b].getFirstLayerClusterIndex();
     });
 
@@ -897,7 +897,7 @@ void TrackerTraits<NLayers>::markTracks(int iteration)
 
     for (int i{0}; i < static_cast<int>(fclusSort.size()); ++i) {
       auto& track = tracks[fclusSort[i]];
-      for (int j{i+1}; j < static_cast<int>(fclusSort.size()) && tracks[fclusSort[j]].getFirstLayerClusterIndex() == track.getFirstLayerClusterIndex(); ++j) {
+      for (int j{i + 1}; j < static_cast<int>(fclusSort.size()) && tracks[fclusSort[j]].getFirstLayerClusterIndex() == track.getFirstLayerClusterIndex(); ++j) {
         auto& track2 = tracks[fclusSort[j]];
         if (areTracksSelected(track, track2)) {
           track.setSharedClusters();
