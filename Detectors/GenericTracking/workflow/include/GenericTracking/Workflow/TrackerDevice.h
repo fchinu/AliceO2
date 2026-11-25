@@ -105,6 +105,7 @@ void trackTimeframe(o2::framework::ProcessingContext& pc, TrackingInterface<Det>
 
   const auto input = readTimeframe<Det>(pc, withVertices);
   interface.configureFor(conditions, input.shipped);
+  interface.setDeadSensors(conditions, orbit);
   // The detector's frame selection (FrameSelection.h): the mask's frames,
   // published on every way out, the vertex cut's once it has run.
   using Selection = typename FrameSelectionOf<Det>::type;
@@ -233,7 +234,7 @@ o2::framework::DataProcessorSpec getTrackerSpec(bool withVertices)
   using namespace o2::framework;
   auto inputs = measurementInputs<Det>(withVertices);
   FrameSelectionOf<Det>::type::addMaskInputs(inputs);
-  auto conditions = std::make_shared<Conditions<Det, true>>(inputs);
+  auto conditions = std::make_shared<Conditions<Det, true>>(inputs, recoParam<Det>().useDeadChips);
   return DataProcessorSpec{
     .name = deviceName<Det>("tracker"),
     .inputs = inputs,
@@ -260,7 +261,7 @@ class GPURecoTrackingOf final : public GPURecoTracking
   {
     auto own = measurementInputs<Det>(false);
     FrameSelectionOf<Det>::type::addMaskInputs(own);
-    mConditions = std::make_unique<RunConditions>(own);
+    mConditions = std::make_unique<RunConditions>(own, recoParam<Det>().useDeadChips);
     inputs.insert(inputs.end(), own.begin(), own.end());
   }
 

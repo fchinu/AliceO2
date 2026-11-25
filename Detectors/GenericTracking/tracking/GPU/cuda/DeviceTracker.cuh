@@ -552,6 +552,7 @@ class DeviceTrackerImpl final : public DeviceTracker<Det>
   static constexpr std::size_t kLayerCount = LayerRowMap<Det>::kLayerCount;
   static constexpr std::size_t kInitialStaging = std::size_t{1} << 20U;
   static constexpr std::size_t kMaxClusters = maxChainLayers<Det>;
+  static constexpr auto kSensors = static_cast<std::size_t>(Det::nSensors); ///< the dead mask's length (`setDeadSensors`)
   using Records = DeviceStageOutput<SelectionRecordOf<kMaxClusters>::template RecordT>;
   using CapturedRoads = DeviceColumns<tracker_detail::CapturedRoadOf<kMaxClusters>::template RecordT>;
   using IterationReport = typename DeviceTracker<Det>::IterationReport;
@@ -630,7 +631,7 @@ class DeviceTrackerImpl final : public DeviceTracker<Det>
         std::memcpy(mHostCellsGeometry.data(), static_cast<const void*>(&geometry), sizeof(geometry));
       }
       const SensorCells<Det>& cells = *mHostCells;
-      if (!mCellLayers.allocate(mArena, cells.layers().size()) || !mCellOffsets.allocate(mArena, cells.offsets().size()) || !mCellSensors.allocate(mArena, std::max<std::size_t>(cells.sensors().size(), 1U)) || !mCellFootprints.allocate(mArena, std::max<std::size_t>(cells.footprints().size(), 1U))) {
+      if (!mCellLayers.allocate(mArena, cells.layers().size()) || !mCellOffsets.allocate(mArena, cells.offsets().size()) || !mCellSensors.allocate(mArena, std::max<std::size_t>(cells.sensors().size(), 1U)) || !mCellFootprints.allocate(mArena, std::max<std::size_t>(cells.footprints().size(), 1U)) || !mCellDead.allocate(mArena, kSensors)) {
         closeFrom(Scope::kRun);
         return StageStatus::kOutOfMemory;
       }
@@ -639,6 +640,7 @@ class DeviceTrackerImpl final : public DeviceTracker<Det>
       upload(cells.sensors().data(), mCellSensors, cells.sensors().size(), mStream);
       upload(cells.footprints().data(), mCellFootprints, cells.footprints().size(), mStream);
       mSensorCells = {.layers = mCellLayers.data(), .offsets = mCellOffsets.data(), .sensors = mCellSensors.data()};
+      uploadDead();
     }
     mStream.synchronize(); // the host objects may go once this returns
     mHostParameters.assign(iterations.begin(), iterations.end());
@@ -678,6 +680,21 @@ class DeviceTrackerImpl final : public DeviceTracker<Det>
     mHostFrame = &frame;
     mPlan = &plan;
     return StageStatus::kComplete;
+  }
+
+  void setDeadSensors(std::span<const std::uint8_t> mask) final
+  {
+    if (!mask.empty() && mask.size() != kSensors) {
+      throw std::invalid_argument("device tracker: a dead-sensor mask of another length than the sensors");
+    }
+    if (std::ranges::equal(mask, mHostDead)) {
+      return;
+    }
+    mHostDead.assign(mask.begin(), mask.end());
+    if (mConfigured && mSensorCells.layers != nullptr) {
+      uploadDead();
+      mStream.synchronize(); // mHostDead may change once this returns
+    }
   }
 
   void setFlatChunkPairs(std::size_t pairs) final { mFlatOptions.maxChunkPairs = pairs; }
@@ -1719,7 +1736,21 @@ class DeviceTrackerImpl final : public DeviceTracker<Det>
     mCellOffsets = {};
     mCellSensors = {};
     mCellFootprints = {};
+    mCellDead = {};
     mSensorCells = {};
+  }
+
+  /// The host's dead mask (`setDeadSensors`) into the run's buffer, in the
+  /// sensor cells' view; none, a null pointer, without one. On mStream: the
+  /// caller synchronises before mHostDead changes.
+  void uploadDead()
+  {
+    if (mHostDead.empty()) {
+      mSensorCells.dead = nullptr;
+      return;
+    }
+    upload(mHostDead.data(), mCellDead, mHostDead.size(), mStream);
+    mSensorCells.dead = mCellDead.data();
   }
 
   void closeChunks() noexcept
@@ -1763,6 +1794,8 @@ class DeviceTrackerImpl final : public DeviceTracker<Det>
   DeviceSpan<std::uint32_t> mCellOffsets;
   DeviceSpan<std::uint32_t> mCellSensors;
   DeviceSpan<SensorFootprint> mCellFootprints; ///< per sensor, for the overlap partners' search
+  DeviceSpan<std::uint8_t> mCellDead;          ///< the dead mask, per sensor (`setDeadSensors`)
+  std::vector<std::uint8_t> mHostDead;         ///< the same on the host, empty for none; kept across runs
   SensorCellsView mSensorCells;
   /// The sensor cells on the host and the geometry they were built from.
   std::optional<SensorCells<Det>> mHostCells;

@@ -3033,7 +3033,8 @@ class MeasurementSinkTask : public Task
   void run(ProcessingContext& pc) final
   {
     mConditions->checkUpdates(pc);
-    LOGP(info, "{}: the timeframe at orbit {}", Det::name, pc.services().get<o2::framework::TimingInfo>().firstTForbit);
+    const auto orbit = pc.services().get<o2::framework::TimingInfo>().firstTForbit;
+    LOGP(info, "{}: the timeframe at orbit {}", Det::name, orbit);
     // The tracking's timeframe ends on every way out of this one.
     const auto ended = mInterface.endTimeframeOnExit();
     // The trackers are built for the timeframe's beam line and grid, again when they change.
@@ -3041,6 +3042,8 @@ class MeasurementSinkTask : public Task
     if (mInterface.configureFor(*mConditions, input.shipped)) {
       observeTracker();
     }
+    // The reconstruction's dead sensors, so the study tracks as it does.
+    mInterface.setDeadSensors(*mConditions, orbit);
     const auto& columns = input.columns;
     const auto offsets = input.offsets;
 
@@ -4561,7 +4564,7 @@ DataProcessorSpec getMeasurementSinkSpec<Det>(bool useMC, bool withVertices, Tra
     inputs.emplace_back("deviceVertices", workflow::gDataOrigin, workflow::description<Det>(workflow::kVertexSeeds), 0, Lifetime::Timeframe);
     inputs.emplace_back("deviceContributors", workflow::gDataOrigin, workflow::description<Det>(workflow::kVertexContributors), 0, Lifetime::Timeframe);
   }
-  auto conditions = std::make_shared<workflow::Conditions<Det, true>>(inputs);
+  auto conditions = std::make_shared<workflow::Conditions<Det, true>>(inputs, recoParam<Det>().useDeadChips);
 
   DataProcessorSpec spec{
     .name = workflow::deviceName<Det>("measurement-sink"),

@@ -61,6 +61,7 @@ class TimeDeadMap
 
   void decodeMap(NoiseMap& noisemap) const;
   void decodeMap(unsigned long orbit, o2::itsmft::NoiseMap& noisemap, bool includeStaticMap = true, long orbitGapAllowed = 330000) const;
+  std::vector<uint16_t> getDeadChipsAt(unsigned long orbit, bool includeStaticMap = true, long orbitGapAllowed = 330000) const;
   std::string getMapVersion() const { return mMAP_VERSION; };
 
   unsigned long getEvolvingMapSize() const { return mEvolvingDeadMap.size(); };

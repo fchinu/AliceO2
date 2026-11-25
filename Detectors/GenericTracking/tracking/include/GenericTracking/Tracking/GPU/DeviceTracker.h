@@ -211,6 +211,12 @@ class DeviceTracker
   /// threads by default: a test hook, so that a fixture's slices are fitted
   /// in several batches; never a tracker's.
   virtual void setRoadBatch(std::size_t roads) = 0;
+  /// The dead sensors the follow passes over (`FollowStage::crossesSensor`):
+  /// \a mask one byte per sensor, nonzero for dead, `Det::nSensors` long, or
+  /// empty for none. Kept on the host and uploaded by every configureRun;
+  /// with a run already configured, uploaded at once, for the stages launched
+  /// after this returns. std::invalid_argument for another length.
+  virtual void setDeadSensors(std::span<const std::uint8_t> mask) = 0;
 
   /// Open iteration \a iteration of the configured ones; the previous
   /// iteration's records go.

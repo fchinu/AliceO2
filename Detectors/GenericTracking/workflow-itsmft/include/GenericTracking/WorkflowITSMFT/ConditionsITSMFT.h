@@ -20,6 +20,10 @@
 /// (`GLO/Config/GRPMagField`) through GRPGeomHelper; and `<DET>/Config/AlpideParam`
 /// for the frames. Offline, from CCDB snapshots through DPL's
 /// `--condition-remap`.
+///
+/// A device that asks for them (`withDeadChips`, the tracking devices with
+/// `GTRKReco<DET>.useDeadChips`) also takes `<DET>/Calib/TimeDeadMap`, and
+/// gives the sensors dead at a timeframe's orbit (DeadChipCondition.h).
 
 #ifndef GTRK_WORKFLOWITSMFT_CONDITIONSITSMFT_H_
 #define GTRK_WORKFLOWITSMFT_CONDITIONSITSMFT_H_
@@ -31,6 +35,7 @@
 #include "GenericTracking/Workflow/Conditions.h"
 #include "GenericTracking/Workflow/DataSpecs.h"
 #include "GenericTracking/Workflow/MaterialLUT.h"
+#include "GenericTracking/WorkflowITSMFT/DeadChipCondition.h"
 
 #include "DataFormatsITSMFT/DPLAlpideParam.h"
 #include "DetectorsBase/GRPGeomHelper.h"
@@ -47,8 +52,11 @@
 #include <fairlogger/Logger.h>
 
 #include <concepts>
+#include <cstdint>
 #include <format>
 #include <memory>
+#include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -65,7 +73,8 @@ class Conditions<Det, WithMaterial, Holder>
   static constexpr bool kOwnDevice = Holder == ConditionsHolder::kOwnDevice;
 
  public:
-  explicit Conditions(std::vector<o2::framework::InputSpec>& inputs)
+  /// \a withDeadChips: the dead map is one more input (DeadChipCondition.h).
+  explicit Conditions(std::vector<o2::framework::InputSpec>& inputs, bool withDeadChips = false)
   {
     if constexpr (kOwnDevice) {
       mRequest = std::make_shared<o2::base::GRPGeomRequest>(false, true, false, true, false, o2::base::GRPGeomRequest::None, inputs);
@@ -74,6 +83,10 @@ class Conditions<Det, WithMaterial, Holder>
     inputs.emplace_back(inputBinding<Det>("geomTGeo"), origin(), "GEOMTGEO", 0, o2::framework::Lifetime::Condition, o2::framework::ccdbParamSpec(detector + "/Config/Geometry"));
     inputs.emplace_back(inputBinding<Det>("alpideParam"), origin(), "ALPIDEPARAM", 0, o2::framework::Lifetime::Condition, o2::framework::ccdbParamSpec(detector + "/Config/AlpideParam"));
     MaterialConditionOf<Det, WithMaterial>::declare(inputs);
+    if (withDeadChips) {
+      mDeadChips.emplace();
+      DeadChipCondition<Det>::declare(inputs);
+    }
   }
 
   static constexpr bool kMeanVertex = true;
@@ -95,6 +108,9 @@ class Conditions<Det, WithMaterial, Holder>
     pc.inputs().get<GeometryTGeoType*>(inputBinding<Det>("geomTGeo").c_str());
     pc.inputs().get<AlpideParam*>(inputBinding<Det>("alpideParam").c_str()); // the CCDB fetcher updates the singleton
     MaterialConditionOf<Det, WithMaterial>::checkUpdates(pc);
+    if (mDeadChips) {
+      DeadChipCondition<Det>::checkUpdates(pc);
+    }
   }
 
   /// Whether \a matcher was one of these conditions, then taken.
@@ -113,7 +129,7 @@ class Conditions<Det, WithMaterial, Holder>
       LOGP(info, "{} GeometryTGeo from the CCDB adopted", Det::name);
       return true;
     }
-    return false;
+    return mDeadChips && mDeadChips->finaliseCCDB(matcher, obj);
   }
 
   /// Frame k starts at k * length + delay + bias BC, independently per layer.
@@ -147,12 +163,20 @@ class Conditions<Det, WithMaterial, Holder>
     return mMaterial.lut();
   }
 
+  /// Whether the dead map is an input (`withDeadChips`).
+  [[nodiscard]] bool hasDeadChips() const { return mDeadChips.has_value(); }
+
+  /// The sensors dead at \a orbit (DeadChipCondition.h); empty without the
+  /// dead map. Valid until the next call.
+  [[nodiscard]] std::span<const SensorID> deadSensors(std::uint32_t orbit, bool includeStatic, long orbitGap) { return mDeadChips ? mDeadChips->deadSensors(orbit, includeStatic, orbitGap) : std::span<const SensorID>{}; }
+
  private:
   using GeometryTGeoType = std::conditional_t<kITS, o2::its::GeometryTGeo, o2::mft::GeometryTGeo>;
   using AlpideParam = o2::itsmft::DPLAlpideParam<kITS ? o2::detectors::DetID::ITS : o2::detectors::DetID::MFT>;
 
   std::shared_ptr<o2::base::GRPGeomRequest> mRequest; ///< the run-wide conditions' request, in a device of its own
   [[no_unique_address]] MaterialConditionOf<Det, WithMaterial> mMaterial;
+  std::optional<DeadChipCondition<Det>> mDeadChips; ///< with `withDeadChips` only
 };
 
 } // namespace o2::gtrk::workflow

@@ -115,12 +115,16 @@ template <bool WithMaterial>
 class Conditions<detectors::TRKFT3, WithMaterial>
 {
  public:
-  explicit Conditions(std::vector<o2::framework::InputSpec>& inputs)
+  /// \a withDeadChips: refused, ALICE 3 has no dead map.
+  explicit Conditions(std::vector<o2::framework::InputSpec>& inputs, bool withDeadChips = false)
     : mRequest(std::make_shared<o2::base::GRPGeomRequest>(false, false, false, false, false, o2::base::GRPGeomRequest::Aligned, inputs)),
       mDictionaries(inputs)
   {
     inputs.emplace_back("almiraParam", origin(), "ALMIRAPARAM", 0, o2::framework::Lifetime::Condition, o2::framework::ccdbParamSpec("TRK/Config/AlmiraParam"));
     MaterialConditionOf<detectors::TRKFT3, WithMaterial>::declare(inputs);
+    if (withDeadChips) {
+      throw std::invalid_argument("GTRKRecoTRK.useDeadChips: ALICE 3 has no dead map");
+    }
   }
 
   /// The orbits per timeframe of the ALICE 3 simulation's HBFUtils: it
@@ -187,7 +191,7 @@ template <bool WithMaterial>
 class Conditions<detectors::TRKFT3TOF, WithMaterial>
 {
  public:
-  explicit Conditions(std::vector<o2::framework::InputSpec>& inputs) : mTrk(inputs)
+  explicit Conditions(std::vector<o2::framework::InputSpec>& inputs, bool withDeadChips = false) : mTrk(inputs)
   {
     MaterialConditionOf<detectors::TRKFT3TOF, WithMaterial>::declare(inputs);
   }

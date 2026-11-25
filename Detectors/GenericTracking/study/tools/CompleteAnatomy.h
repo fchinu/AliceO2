@@ -3323,7 +3323,10 @@ class CompleteAnatomy
     withBools(
       [&]<bool BeamLine, bool Greedy, bool EndDensity, bool BeamEnd, bool Shape>(std::bool_constant<BeamLine>, std::bool_constant<Greedy>, std::bool_constant<EndDensity>, std::bool_constant<BeamEnd>, std::bool_constant<Shape>) {
         if constexpr (BeamLine || !BeamEnd) {
-          const FollowStage<Det, BeamLine, false, Greedy, EndDensity, BeamEnd, Shape> stage{&parameters, &frame, &geometry, propagator, iteration.tracks->view(), used, mMaxWidthPS.data(), mCells.view(), nullptr, parameters.sharedInnermost == 0U, first};
+          // The dead sensors as the follow read them: past a dead layer as it went.
+          auto cells = mCells.view();
+          cells.dead = iteration.followDead;
+          const FollowStage<Det, BeamLine, false, Greedy, EndDensity, BeamEnd, Shape> stage{&parameters, &frame, &geometry, propagator, iteration.tracks->view(), used, mMaxWidthPS.data(), cells, nullptr, parameters.sharedInnermost == 0U, first};
           body(stage);
         }
       },

@@ -45,6 +45,8 @@
 
 #include "GPUCommonAlgorithm.h"
 
+#include <fairlogger/Logger.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -251,6 +253,21 @@ class Tracker
     // overlap partners.
     if (std::ranges::any_of(mIterations, [](const auto& parameters) { return parameters.follow || parameters.followEnd || parameters.overlapPartners; })) {
       mSensorCells = SensorCells<Det>(geometry);
+    }
+  }
+
+  void setDeadSensors(std::span<const SensorID> dead)
+  {
+    mDead.fill(0U);
+    // Only a sensor marked makes a mask: one of rejected IDs alone is none.
+    mHasDead = false;
+    for (const SensorID sensor : dead) {
+      if (sensor >= mDead.size()) {
+        LOGP(warning, "dead sensor {} beyond the {} sensors, ignored", sensor, mDead.size());
+        continue;
+      }
+      mDead[sensor] = 1U;
+      mHasDead = true;
     }
   }
 
@@ -489,6 +506,10 @@ class Tracker
     /// With the follow, the used mask as the follow read it, before its
     /// rows and the length cut; empty without.
     std::span<const std::uint8_t> followUsed;
+    /// With the follow, the dead-sensor mask it read (`setDeadSensors`,
+    /// `deadMask`), for a replay's `SensorCellsView::dead`; null without
+    /// the follow or with nothing dead.
+    const std::uint8_t* followDead = nullptr;
     /// With the follow, each selected record's track as the follow and its
     /// refit left it, before the length cut and the pT floor after the follow
     /// drop any (one per selected record, in its order): its rows, their
@@ -504,6 +525,8 @@ class Tracker
   void setSliceObserver(SliceObserver observer) { mSliceObserver = std::move(observer); }
   /// Called by `run` after every completed iteration, as the slice observer.
   void setIterationObserver(IterationObserver observer) { mIterationObserver = std::move(observer); }
+
+  [[nodiscard]] const std::uint8_t* deadMask() const { return mHasDead ? mDead.data() : nullptr; }
 
   /// The source map of the last slice: its halo rows.
   [[nodiscard]] const typename Scratch::Sources& sources() const { return mScratch.sources(); }
@@ -820,6 +843,7 @@ class Tracker
                                   .followStart = started ? std::span<const BoundTrackState>{mFollowStart} : std::span<const BoundTrackState>{},
                                   .followStartCount = started ? std::span<const std::uint8_t>{mFollowStartCount} : std::span<const std::uint8_t>{},
                                   .followUsed = started ? std::span<const std::uint8_t>{mFollowUsed} : std::span<const std::uint8_t>{},
+                                  .followDead = started ? deadMask() : nullptr,
                                   .followEndClusters = started && followed ? std::span<const ClusterList<kMaxClusters>>{mFollowEndClusters} : std::span<const ClusterList<kMaxClusters>>{},
                                   .followEndCount = started && followed ? std::span<const std::uint8_t>{mFollowEndCount} : std::span<const std::uint8_t>{},
                                   .followEndState = started && followed ? std::span<const BoundTrackState>{mFollowEndState} : std::span<const BoundTrackState>{},
@@ -833,7 +857,9 @@ class Tracker
   /// proposals tallied into \a tracks, \a outward and \a inward.
   [[nodiscard]] StageStatus runFollow(Follow<Det>& follow, const IterationParameters<Det>& parameters, const Frame& frame, const TimeframePlan<Det>& plan, std::uint32_t trackOffset, bool earlier, std::size_t& tracks, std::size_t& outward, std::size_t& inward)
   {
-    const auto status = follow.run(fitForEach(), parameters, frame, *mGeometry, mPropagator, mRefit.tracks(), trackOffset, parameters.sharedInnermost == 0U, earlier, mUsed, plan.layerMaxWidthPS, mSensorCells.view());
+    auto sensorCellsView = mSensorCells.view();
+    sensorCellsView.dead = deadMask();
+    const auto status = follow.run(fitForEach(), parameters, frame, *mGeometry, mPropagator, mRefit.tracks(), trackOffset, parameters.sharedInnermost == 0U, earlier, mUsed, plan.layerMaxWidthPS, sensorCellsView);
     if (status != StageStatus::kComplete) {
       return status;
     }
@@ -1278,6 +1304,8 @@ class Tracker
   std::vector<std::uint8_t> mFollowEndCount;
   std::vector<BoundTrackState> mFollowEndState;
   SensorCells<Det> mSensorCells;
+  std::array<std::uint8_t, Det::nSensors> mDead{};
+  bool mHasDead = false;
   BoundedVector<std::uint8_t> mUsed;
   BoundedVector<std::uint8_t> mUsedBeforeSelection; ///< the mask as the selection found it (`dropTracks`)
   BoundedVector<Index> mKeptTracks;                 ///< `dropTracks`' kept tracks

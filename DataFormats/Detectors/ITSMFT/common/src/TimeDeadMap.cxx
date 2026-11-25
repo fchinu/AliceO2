@@ -37,15 +37,24 @@ void TimeDeadMap::decodeMap(o2::itsmft::NoiseMap& noisemap) const
 
 void TimeDeadMap::decodeMap(unsigned long orbit, o2::itsmft::NoiseMap& noisemap, bool includeStaticMap, long orbitGapAllowed) const
 { // for time-dependent and (optionally) static part. Use orbitGapAllowed = -1 to ignore check on orbit difference
+  for (auto c : getDeadChipsAt(orbit, includeStaticMap, orbitGapAllowed)) {
+    noisemap.maskFullChip(c);
+  }
+}
+
+std::vector<uint16_t> TimeDeadMap::getDeadChipsAt(unsigned long orbit, bool includeStaticMap, long orbitGapAllowed) const
+{ // for time-dependent and (optionally) static part. Use orbitGapAllowed = -1 to ignore check on orbit difference
+
+  std::vector<uint16_t> deadChips;
 
   if (mMAP_VERSION != "3" && mMAP_VERSION != "4") {
     LOG(error) << "Trying to decode time-dependent deadmap version " << mMAP_VERSION << ". Not implemented, doing nothing.";
-    return;
+    return deadChips;
   }
 
   if (mEvolvingDeadMap.empty()) {
     LOG(warning) << "Time-dependent dead map is empty. Doing nothing.";
-    return;
+    return deadChips;
   }
 
   std::vector<uint16_t> closestVec;
@@ -65,13 +74,14 @@ void TimeDeadMap::decodeMap(unsigned long orbit, o2::itsmft::NoiseMap& noisemap,
 
   for (int iel = 0; iel < closestVec.size(); iel++) {
     uint16_t w = closestVec.at(iel);
-    noisemap.maskFullChip(w & 0x7FFF);
+    deadChips.push_back(w & 0x7FFF);
     if (w & 0x8000) {
       for (int w2 = (w & 0x7FFF) + 1; w2 < closestVec.at(iel + 1); w2++) {
-        noisemap.maskFullChip(w2);
+        deadChips.push_back(w2);
       }
     }
   }
+  return deadChips;
 }
 
 std::vector<unsigned long> TimeDeadMap::getEvolvingMapKeys() const

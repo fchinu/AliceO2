@@ -92,6 +92,7 @@ struct SensorCellsView {
   const SensorCellLayer* layers = nullptr;
   const std::uint32_t* offsets = nullptr;
   const std::uint32_t* sensors = nullptr;
+  const std::uint8_t* dead = nullptr;
 
   /// Every sensor of \a layer listed in a cell that the range \a phi +-
   /// \a phiReach, \a second +- \a secondReach covers, until \a visit returns

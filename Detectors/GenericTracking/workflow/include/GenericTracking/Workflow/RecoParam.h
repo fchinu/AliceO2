@@ -286,6 +286,20 @@ struct RecoSettings {
   /// empty products and is counted, instead of failing the run. Off, the
   /// default, as ITS's DropTFUponFailure: the run fails.
   bool dropTFUponFailure = false;
+
+  /// Whether the tracking takes the detector's dead chips per timeframe, the
+  /// ITS's and the MFT's `<DET>/Calib/TimeDeadMap`: one more condition input
+  /// of the tracking devices (DeadChipCondition.h). Off, the default: no
+  /// input, nothing dead.
+  bool useDeadChips = false;
+  /// With useDeadChips, whether the dead map's static part is included; on
+  /// by default.
+  bool deadChipIncludeStatic = true;
+  /// With useDeadChips, the farthest, in orbits, a timeframe's first orbit
+  /// may be from the time-dependent entry it takes: beyond, the entry is
+  /// dropped and only the static part kept. Negative: no limit. 330000, about
+  /// 30 s, by default, as `TimeDeadMap::decodeMap`.
+  int deadChipOrbitGap = 330000;
 };
 
 /// Detector \a N's settings (`o2::detectors::DetID`): `GTRKReco<DET>`.

@@ -71,6 +71,9 @@ struct LayerCrossingPrediction {
   PropagationStatus status = PropagationStatus::kNotFinite;
 };
 
+enum class Crossing : std::uint8_t { kNone,
+                                     kLive,
+                                     kDead };
 namespace follow
 {
 
@@ -1378,19 +1381,16 @@ class FollowStage
     return follow::predictedWindow(mPropagator, *mParameters, *mGeometry, detail::LinkSteps{}, state, factors, target.layer, direction, target.prediction, window, reach, &traversed);
   }
 
-  /// The layers a step from \a state may reach in \a direction, into
-  /// \a targets, nearest crossing first; how many.
-  [[nodiscard]] GPUhdi() std::uint32_t targetsOf(const BoundParameters& state, PropagationDirection direction, follow::Target* targets) const
+  [[nodiscard]] GPUhdi() std::uint32_t targetsFrom(const BoundParameters& state, LayerID from, PropagationDirection direction, follow::Target* targets) const
   {
     const bool forward = direction == PropagationDirection::kForward;
-    const LayerID current = mGeometry->surface(state.surface).layer;
     const auto* offsets = forward ? mParameters->allOutLinkOffsets : mParameters->allInLinkOffsets;
     const auto* indices = forward ? mParameters->allOutLinkIndices : mParameters->allInLinkIndices;
     // The state's part of every link's crossing, once.
     const auto start = layerCrossingStart(mPropagator, mGeometry->planeOf(state), state);
     const Scalar* here = start.position;
     std::uint32_t nTargets = 0U;
-    for (auto at = offsets[current]; at < offsets[current + 1U]; ++at) {
+    for (auto at = offsets[from]; at < offsets[from + 1U]; ++at) {
       const auto link = indices[at];
       const LayerID layer = forward ? mParameters->linkTargets[link] : mParameters->linkSources[link];
       const auto prediction = predictLayerCrossing(*mParameters, start, layer, direction);
@@ -1424,18 +1424,65 @@ class FollowStage
     return nTargets;
   }
 
+  /// The layers a step from \a state may reach in \a direction, into
+  /// \a targets, nearest crossing first; how many.
+  [[nodiscard]] GPUhdi() std::uint32_t targetsOf(const BoundParameters& state, PropagationDirection direction, follow::Target* targets) const
+  {
+    return targetsFrom(state, mGeometry->surface(state.surface).layer, direction, targets);
+  }
+
+  /// A step's targets once a dead layer was met: the direct ones and those
+  /// the dead layers' links add. Each layer at most once, so no more than
+  /// the layer count.
+  static constexpr std::size_t kMaxTargets = static_cast<std::size_t>(Detector<Det>::nLayers);
+
+  /// Adds to \a list, whose \a n targets from \a next on are still to be
+  /// tried, the layers the links of \a dead reach from \a state
+  /// (`targetsFrom`) that \a list does not hold yet, among the pending ones
+  /// in `targetsFrom`'s order: nearest crossing first, the lower layer on a
+  /// tie. The distances are measured from \a state in both, so they
+  /// compare. The targets before \a next do not move.
+  GPUhdi() void addBeyondDead(const BoundParameters& state, LayerID dead, PropagationDirection direction, follow::Target* list, std::uint32_t next, std::uint32_t& n) const
+  {
+    follow::Target beyond[follow::maxDegree<Det>];
+    const std::uint32_t nBeyond = targetsFrom(state, dead, direction, beyond);
+    // NOLINTBEGIN(clang-analyzer-security.ArrayBound): every layer is listed once, so n < kMaxTargets
+    for (std::uint32_t b = 0; b < nBeyond; ++b) {
+      const auto& add = beyond[b];
+      bool listed = false;
+      for (std::uint32_t i = 0; i < n; ++i) {
+        listed = listed || list[i].layer == add.layer;
+      }
+      if (listed) {
+        continue;
+      }
+      std::uint32_t slot = n++;
+      while (slot > next && (add.distance2 < list[slot - 1U].distance2 || (!(list[slot - 1U].distance2 < add.distance2) && add.layer < list[slot - 1U].layer))) {
+        list[slot] = list[slot - 1U];
+        --slot;
+      }
+      list[slot] = add;
+    }
+    // NOLINTEND(clang-analyzer-security.ArrayBound)
+  }
+
   /// The nominal pass's walk over \a branch's \a nTargets \a targets: per
   /// target its window (`predictedWindow`; a target the state cannot be
   /// carried to is passed, the track taken not to cross it), and
   /// \a search(target, window, traversed) with the material the window
   /// crossed, whether it found a row there; a target
   /// without one crossed in a sensor is a hole, counted on the branch, past
-  /// the iteration's holes the pass ends. Whether a search found a row.
+  /// the iteration's holes the pass ends. A target crossed in dead sensors
+  /// only is no hole: the layers its own links reach join the targets still
+  /// to try (`addBeyondDead`). Whether a search found a row.
   template <typename Observer, typename Search>
   [[nodiscard]] GPUhdi() GPUAlwaysInline() bool overTargets(Branch& branch, const TimeEstPS& box, PropagationDirection direction, const follow::Target* targets, std::uint32_t nTargets, const Observer& observe, const Search& search) const
   {
+    // The targets are read from \a targets until a dead layer is met, then
+    // from the merged copy.
+    follow::Target merged[kMaxTargets];
     for (std::uint32_t t = 0; t < nTargets; ++t) {
-      const auto& target = targets[t]; // NOLINT(clang-analyzer-security.ArrayBound): nTargets <= maxDegree<Det> (`targetsOf`)
+      const auto& target = targets[t]; // NOLINT(clang-analyzer-security.ArrayBound): nTargets <= kMaxTargets (`targetsOf`, `addBeyondDead`)
       CandidateWindow window;
       Scalar reach[2]{};
       detail::StepMaterial traversed;
@@ -1446,11 +1493,21 @@ class FollowStage
       if (search(target, window, traversed)) {
         return true;
       }
-      const bool crossed = crossesSensor(branch.state, target, reach, direction);
-      observe.hole(target.layer, crossed);
-      branch.crossed = branch.crossed || crossed;
-      if (crossed && ++branch.holes > mParameters->followHoles) {
+      const Crossing crossed = crossesSensor(branch.state, target, reach, direction);
+      const bool crossedLive = crossed == Crossing::kLive;
+      observe.hole(target.layer, crossedLive);
+      branch.crossed = branch.crossed || crossedLive;
+      if (crossedLive && ++branch.holes > mParameters->followHoles) {
         return false;
+      }
+      if (crossed == Crossing::kDead) {
+        if (targets != merged) {
+          for (std::uint32_t i = 0; i < nTargets; ++i) {
+            merged[i] = targets[i];
+          }
+          targets = merged;
+        }
+        addBeyondDead(branch.state, target.layer, direction, merged, t + 1U, nTargets);
       }
     }
     return false;
@@ -1785,12 +1842,12 @@ class FollowStage
   /// crossing, as far from it as the layer's envelope \a reach lets the
   /// crossing move; a curved sensor is tested on its tangent plane at the
   /// crossing's angle.
-  [[nodiscard]] GPUhdi() GPUAlwaysInline() bool crossesSensor(const BoundParameters& state, const follow::Target& target, const Scalar* reach, PropagationDirection direction) const
+  [[nodiscard]] GPUhdi() GPUAlwaysInline() Crossing crossesSensor(const BoundParameters& state, const follow::Target& target, const Scalar* reach, PropagationDirection direction) const
   {
     // An inactive layer is never a hole, nor a crossing the unconfirmed drop reads (LayerSpec.h).
     if constexpr (Detector<Det>::inactiveLayers != 0U) {
       if (Detector<Det>::isInactiveLayer(target.layer)) {
-        return false;
+        return Crossing::kNone;
       }
     }
     countWork(WorkCounter::kFollowHoleTests);
@@ -1799,14 +1856,25 @@ class FollowStage
     follow::crossingPoint(*mParameters, target.layer, target.prediction, point);
     const auto& propagator = pointPropagator(mPropagator, from, state);
     const Scalar curvature = state.qOverP() * propagator.bzKiloGauss * static_cast<Scalar>(constants::math::B2C);
-    const bool crossed = mCells.anySensor(target.layer, target.prediction.phi, reach[0], target.prediction.second, reach[1], [&](std::uint32_t id) {
+    const std::uint8_t* dead = mCells.dead;
+    bool crossedDead = false;
+    const bool live = mCells.anySensor(target.layer, target.prediction.phi, reach[0], target.prediction.second, reach[1], [&](std::uint32_t id) {
+      const bool isDead = dead != nullptr && dead[id] != 0U;
+      if (isDead && crossedDead) {
+        return false;
+      }
       const TrackingSurface plane = mGeometry->planeAt(static_cast<SensorID>(id), point);
       BoundParameters at = state;
       const auto result = propagate<CrossingRule::kFirstAhead, Scalar>(propagator, at, from, plane, direction);
-      return result.status == PropagationStatus::kOk && !follow::beyondHalfTurn(curvature * result.pathLength);
+      const bool inside = result.status == PropagationStatus::kOk && !follow::beyondHalfTurn(curvature * result.pathLength);
+      if (isDead) {
+        crossedDead = crossedDead || inside;
+        return false; // a live sensor may still be crossed
+      }
+      return inside;
     });
-    countWork(WorkCounter::kFollowHoles, crossed ? 1U : 0U);
-    return crossed;
+    countWork(WorkCounter::kFollowHoles, live ? 1U : 0U);
+    return live ? Crossing::kLive : (crossedDead ? Crossing::kDead : Crossing::kNone);
   }
 
   const IterationParameters<Det>* mParameters = nullptr;

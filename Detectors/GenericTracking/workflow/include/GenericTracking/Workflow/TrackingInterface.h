@@ -22,6 +22,8 @@
 /// Per timeframe, in this order:
 /// - `configureFor`: `configure` on the first timeframe and for a new shipped
 ///   beam line;
+/// - `setDeadSensors`: the timeframe's dead sensors, none without
+///   `GTRKReco<DET>.useDeadChips`;
 /// - `checkInput`: the columns, the grid offsets, the variances, the seeds;
 /// - `vertices`: the input seeds, or the own vertexer's;
 /// - `track`: plan and run;
@@ -249,6 +251,32 @@ class TrackingInterface
     }
   }
 
+  /// The timeframe's dead sensors at \a orbit, from \a conditions -- with
+  /// `GTRKReco<DET>.useDeadChips` and a detector with a dead map; else none
+  /// (`deadSensors`): after `configureFor`, before the vertices and the
+  /// tracking.
+  template <class Conditions>
+  void setDeadSensors(Conditions& conditions, std::uint32_t orbit)
+  {
+    std::span<const SensorID> dead;
+    if constexpr (requires { conditions.deadSensors(orbit, true, 0L); conditions.hasDeadChips(); }) {
+      const auto& param = recoParam<Det>();
+      if (param.useDeadChips) {
+        if (!conditions.hasDeadChips()) {
+          throw std::logic_error(fmt::format("GenericTracking: GTRKReco{}.useDeadChips, and the device's conditions take no dead map", Det::name));
+        }
+        dead = conditions.deadSensors(orbit, param.deadChipIncludeStatic, static_cast<long>(param.deadChipOrbitGap));
+      }
+    }
+    mDeadSensors.assign(dead.begin(), dead.end());
+    mTracker->setDeadSensors(mDeadSensors);
+    // The device tracker follows on its own copy of the host's mask.
+    if (mDevice) {
+      const std::uint8_t* mask = mTracker->deadMask();
+      mDevice->setDeadSensors(mask != nullptr ? std::span<const std::uint8_t>{mask, static_cast<std::size_t>(Det::nSensors)} : std::span<const std::uint8_t>{});
+    }
+  }
+
   /// The input's checks: every column \a columns as long as the others, the
   /// grid's prefix \a offsets over its \a bucketCount buckets ending at the
   /// row count, every measurement's variances fit for the fit, \a seeds
@@ -405,6 +433,9 @@ class TrackingInterface
   [[nodiscard]] const Material& material() const { return *mMaterial; }
   [[nodiscard]] const LinkMaterial<Det>& linkMaterial() const { return mTracking->material(); }
   [[nodiscard]] const BeamLine& beamLine() const { return mBeamLine; }
+  /// The timeframe's dead sensors as of the last `setDeadSensors`, sorted;
+  /// none without `GTRKReco<DET>.useDeadChips`.
+  [[nodiscard]] std::span<const SensorID> deadSensors() const { return mDeadSensors; }
   [[nodiscard]] const GridGeometry<Det>& grid() const
   {
     if (!mGrid) {
@@ -551,6 +582,8 @@ class TrackingInterface
   double mBzKiloGauss = 0.;
   std::unique_ptr<const Geometry<Det>> mGeometry;
   const Material* mMaterial = nullptr; ///< the condition's (MaterialLUT.h)
+  /// The dead sensors as of the last `setDeadSensors` (`deadSensors`).
+  std::vector<SensorID> mDeadSensors;
   std::unique_ptr<TrackingGeometry<Det>> mTracking;
   /// The LUT the tracking geometry's material tables were filled from.
   BeamLine mBeamLine;                     ///< the producer's, the trackers were built for
